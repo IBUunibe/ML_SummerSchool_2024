@@ -1,0 +1,183 @@
+---
+title: "Practical 1 - Logistic Regression"
+author:
+  - name: "Stephan Peischel"
+    affiliation: "Interfaculty Bioinformatics Unit, University of Bern"
+date: "`r format(Sys.time(), '%d.%m.%Y')`"
+output:
+  html_document:
+    self_contained: true
+    toc: true # table of content true
+    toc_float: true
+    toc_depth: 2  # upto two depths of headings (specified by #, ## and ###)
+    theme: spacelab
+---
+
+Logistic regression is a statistical method used for binary classification problems. In this tutorial, we will fit a logistic regression model to a dataset (pp_train) on the survival of premature babies and visualize the predicted probabilities along with the observed data points.
+
+The dataset includes the following variables:
+
+    - Survival: Survival status of the baby (0 = did not survive, 1 = survived)
+    
+    - Weight: Birth weight of the baby (in grams)
+    
+    - Age: Gestational age of the baby (in weeks)
+    
+    - X1.Apgar: Apgar score at 1 minute after birth
+    
+    - X5.Apgar: Apgar score at 5 minutes after birth
+    
+    - pH: Blood pH level of the baby
+
+
+
+```{r setup, include=TRUE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(ggcorrplot)
+library(cowplot)
+library(caret)
+```
+
+
+
+## Data exploration
+
+```{r}
+df <- read.table("data/baby.dat",
+           header=T)
+```
+
+```{r}
+# View the first few rows of the dataset
+head(df)
+```
+
+```{r}
+# Summary statistics
+summary(df)
+```
+
+```{r}
+# Check the structure of the dataset
+str(df)
+```
+
+```{r}
+# Plot the distribution of Survival
+ggplot(df, aes(x = factor(Survival))) +
+  geom_bar() +
+  labs(x = "Survival Status", y = "Count", title = "Distribution of Survival Status") +
+  theme_minimal()
+```
+
+```{r, fig.height=12, fig.width=15}
+
+
+variables <- colnames(df)
+variables <- variables[2:length(variables)]
+plot_list <- list()
+
+for (var in variables) {
+  p <- ggplot(df, aes(x = !!sym(var), fill = factor(Survival))) +
+    geom_histogram(position = "dodge", bins = 10) +
+    labs(x = var, y = "Count", fill = "Survival Status",  title = var) +
+    theme_minimal()
+  plot_list[[var]] <- p
+}
+
+
+plot_grid(plotlist = plot_list, nrow = 3)
+
+```
+
+
+```{r, fig.height=12, fig.width=15}
+variables <- colnames(df)
+variables <- variables[2:length(variables)]
+plot_list <- list()
+
+for (var in variables) {
+  p <- ggplot(df, aes(y = !!sym(var), fill = factor(Survival), x = factor(Survival))) +
+    geom_boxplot() +
+    labs(x = "Survival", y = var, fill = "Survival Status", title = var) +
+    theme_minimal()
+  plot_list[[var]] <- p
+}
+
+
+plot_grid(plotlist = plot_list, nrow = 3)
+```
+
+
+## Feature Engineering & Data Splitting
+
+For the logistic regression, we split the data into test (30%) and train data (70%).
+
+```{r}
+df <- dplyr::rename(df,labels = Survival) %>% 
+  mutate(labels = factor(labels))
+levels(df$labels) = c("not surviving","surviving")
+
+trn_indx <- createDataPartition(df$labels , 
+                                p = .7, 
+                                list = FALSE,times = 1) %>%  as.numeric()
+
+tst_indx <- which(!(seq_len(nrow(df)) %in% trn_indx))
+
+train = df[trn_indx,]
+test = df[tst_indx,]
+
+table(train$labels)
+table(test$labels)
+```
+
+It is important to preprocess the data **after** splitting the data into test and train sets. Otherwise, we would introduce information leakage between the data sets.
+
+```{r}
+
+(preproc <- preProcess(train, method = c("center","scale"))) # note that factors are not transformed
+pp_train <- predict(preproc, train) # centering and Scaling train set based on train data
+
+(preproc <- preProcess(test, method = c("center","scale"))) # note that factors are not transformed
+pp_test <- predict(preproc, test) # centering and Scaling test set based on train data
+
+```
+
+
+## Fitting a logistig regression
+
+```{r}
+
+# Fit the logistic regression model
+babies.fit <- glm(labels ~ ., data = pp_train, family = "binomial")
+summary(babies.fit)
+```
+
+
+```{r}
+# Create a data frame with the predicted probabilities
+pp_train$predicted_prob <- predict(babies.fit, type = "response")
+
+# Plot the observed data points and the fitted logistic regression line
+ggplot(pp_train, aes(x = Weight, y = predicted_prob)) +
+  geom_point(aes(color = factor(labels)), alpha = 0.6) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), se = FALSE) +
+  labs(x = "Weight", y = "Predicted Probability", color = "Survival Status",
+       title = "Logistic Regression Fit and Predicted Probabilities by Weight") +
+  theme_minimal()
+
+```
+
+Confusion Matrix
+
+```{r}
+# Create predicted labels based on a threshold of 0.5
+pp_train$predicted_label <- ifelse(pp_train$predicted_prob > 0.5, 1, 0)
+
+# Create a confusion matrix
+conf_matrix <- table(pp_train$predicted_label, pp_train$labels)
+print(conf_matrix)
+```
+
