@@ -1,0 +1,435 @@
+---
+title: "Exercise 3: Logistic Regression (Babies data set)"
+subtitle: ""
+author:
+  - name: "Aparna Pandey, Marco Kreuzer & Stephan Peischl"
+    affiliation: "IBU Machine Learning Summer School 2024, University of Bern"
+date: "`r format(Sys.time(), '%d.%m.%Y')`"
+output:
+  html_document:
+    self_contained: true
+    toc: true # table of content true
+    toc_float: true
+    toc_depth: 2  # upto two depths of headings (specified by #, ## and ###)
+    theme: spacelab
+---
+
+### Logistic Regression
+
+Logistic regression is a statistical method used for binary classification problems. In this tutorial, we will first explore the dataset, then fit a logistic regression model and do model selection with LRT and AIC. We will also apply a logistic regression with LASSO. Finally, we will use the test data set to examine which of the models performed best.
+
+The dataset includes the following variables:
+
+- Survival: Survival status of the baby (0 = did not survive, 1 = survived)
+
+- Weight: Birth weight of the baby (in grams)
+
+- Age: Gestational age of the baby (in weeks)
+
+- X1.Apgar: Apgar score at 1 minute after birth
+
+- X5.Apgar: Apgar score at 5 minutes after birth
+
+- pH: Blood pH level of the baby
+
+```{r, message=F, warning=F}    
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggcorrplot)
+library(GGally)
+library(cowplot)
+library(caret)
+library(glmnet)
+library(pROC)
+library(kableExtra)
+set.seed(42)
+```
+
+
+## Data Exploration
+
+
+First, let's load the data set:
+
+```{r}
+df <- read.table("data/baby.dat", header = TRUE)
+```
+
+View the first few rows of the data set:
+
+```{r}
+head(df)
+```
+
+Summary statistics:
+
+```{r}
+summary(df)
+```
+
+Check the structure of the dataset:
+
+```{r}
+
+str(df)
+```
+
+
+Plot the distribution of survival status:
+
+```{r}
+ggplot(df, aes(x = factor(Survival))) +
+  geom_bar() +
+  labs(x = "Survival Status", y = "Count", title = "Distribution of Survival Status") +
+  theme_minimal()
+```
+
+We have the following distributions:
+
+```{r}
+table(df$Survival)
+```
+
+Visualize the distribution of each variable grouped by survival status:
+
+
+```{r}
+variables <- colnames(df)[2:length(colnames(df))]
+plot_list <- list()
+
+for (var in variables) {
+  p <- ggplot(df, aes(x = !!sym(var), fill = factor(Survival))) +
+    geom_histogram(position = "dodge", bins = 10) +
+    labs(x = var, y = "Count", fill = "Survival Status", title = var) +
+    theme_minimal()
+  plot_list[[var]] <- p
+}
+
+plot_grid(plotlist = plot_list, nrow = 3)
+```
+
+Visualize the box plots of each variable grouped by survival status:
+
+```{r}
+
+plot_list <- list()
+
+for (var in variables) {
+  p <- ggplot(df, aes(y = !!sym(var), fill = factor(Survival), x = factor(Survival))) +
+    geom_boxplot() +
+    labs(x = "Survival", y = var, fill = "Survival Status", title = var) +
+    theme_minimal()
+  plot_list[[var]] <- p
+}
+
+plot_grid(plotlist = plot_list, nrow = 3)
+```
+
+It's always very helpful to plot the correlations between variables:
+
+
+```{r}
+cormat <- cor(df[2:ncol(df)] )
+
+cormat %>% as.data.frame %>% mutate(var2=rownames(.)) %>%
+  pivot_longer(!var2, values_to = "value") %>%
+  ggplot(aes(x=name,y=var2,fill=abs(value),label=round(value,2))) +
+  geom_tile() + geom_label() + xlab("") + ylab("") +
+  ggtitle("Correlation matrix of predictors") +
+  labs(fill="Correlation\n(absolute):")
+```
+
+```{r}
+ggpairs(df) + theme_minimal()
+```
+
+
+## Feature Engineering and Data Splitting
+
+For the logistic regression, we split the data into test (30%) and train (70%) sets.
+
+```{r}
+
+df <- df %>%
+  rename(labels = Survival) %>%
+  mutate(labels = factor(labels))
+levels(df$labels) <- c("not surviving", "surviving")
+
+trn_indx <- createDataPartition(df$labels, p = 0.7, list = FALSE, times = 1) %>%
+  as.numeric()
+tst_indx <- which(!(seq_len(nrow(df)) %in% trn_indx))
+
+train <- df[trn_indx, ]
+test <- df[tst_indx, ]
+
+table(train$labels)
+table(test$labels)
+```
+
+<br>
+It is important to preprocess the data after splitting the data into test and train sets to avoid information leakage.
+
+<br>
+
+```{r}
+preproc <- preProcess(train, method = c("center", "scale"))
+pp_train <- predict(preproc, train) 
+
+preproc <- preProcess(test, method = c("center", "scale"))
+pp_test <- predict(preproc, test)
+```
+
+## Fitting a Logistic Regression
+
+Fit the logistic regression model:
+
+```{r}
+
+# Fit the logistic regression model
+babies.fit <- glm(labels ~ ., data = pp_train, family = "binomial")
+summary(babies.fit)
+```
+
+
+
+Create predicted probabilities:
+
+```{r}
+
+# Create a data frame with the predicted probabilities
+pp_train$predicted_prob <- predict(babies.fit, type = "response")
+pp_train$predicted_label <- ifelse(pp_train$predicted_prob > 0.5, 1, 0)
+
+# Plot the observed data points and the fitted logistic regression line
+ggplot(pp_train, aes(x = Weight, y = predicted_prob)) +
+  geom_point(aes(color = factor(labels)), alpha = 0.6) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), se = FALSE) +
+  labs(x = "Weight", y = "Predicted Probability", color = "Survival Status",
+       title = "Logistic Regression Fit and Predicted Probabilities by Weight") +
+  theme_minimal()
+```
+
+
+to evaluate the performance of the logistic regression model, we create a confusion matrix:
+
+```{r}
+# Create a confusion matrix
+conf_matrix <- table(pp_train$predicted_label, pp_train$labels)
+print(conf_matrix)
+```
+
+
+## Identify the most important variables
+
+We can first identify the most important coefficients by looking at the output of our
+logistic regression model. We can see that "Weight" is the only significant coefficient.
+In order to get the effect of the coefficients on the repsonse, we can convert the 
+coefficients into the odds ratio:
+
+```{r}
+exp(coef(babies.fit))
+
+```
+
+We see, that for example Weight has a value of 2.4 which can be interpreted as follows: For each one-unit increase in weight, the odds of the event occurring (e.g., survival) increase by approximately 2.43 times, holding all other variables constant. This indicates a strong positive relationship between weight and the likelihood of the event.
+
+## Model selection with LRT and AIC
+
+Given the insights we have so far, we can conclude that a simpler model could be better. We therefore
+try out different models with less predictors and compare the outputs of the models.
+
+```{r}
+# full model
+model1 <- glm(labels ~ .  , data = pp_train[1:6], family = "binomial")
+# excluding pH
+model2 <- glm(labels ~ Weight + Age + X1.Apgar + X5.Apgar, data = pp_train, family = "binomial")
+# excluding pH and Agpar 5
+model3 <- glm(labels ~ Weight + Age + X1.Apgar, data = pp_train, family = "binomial")
+#excluding ph and Apgar 1
+model4 <- glm(labels ~ Weight + Age + X5.Apgar + pH, data = pp_train, family = "binomial")
+# exclude both Apgar values and pH
+model5 <- glm(labels ~ Weight + Age, data = pp_train, family = "binomial")
+```
+
+Now let's do the Likelihood Ratio Tests:
+
+```{r}
+# Compare models using LRT
+lrt_2 <- anova(model1, model2, test = "LRT")
+lrt_3 <- anova(model1, model3, test = "LRT")
+lrt_4 <- anova(model1, model4, test = "LRT")
+lrt_5 <- anova(model1, model5, test = "LRT")
+
+# Print LRT results
+print(lrt_2)
+print(lrt_3)
+print(lrt_4)
+print(lrt_5)
+
+```
+
+The LTR shows that the more complex models are not preferred.
+
+```{r}
+aic_values <- AIC(model1, model2, model3, model4, model5)
+print(aic_values)
+```
+
+
+We get the same result when looking at the AIC values (lowest are preferred).
+
+## LASSO analysis
+
+```{r}
+x <- model.matrix(labels ~ ., pp_train[1:6])[, -1]  # Remove the intercept
+y <- pp_train$labels
+
+```
+
+```{r}
+# Perform LASSO with cross-validation to find the optimal lambda
+lasso_cv <- cv.glmnet(x, y, family = "binomial", alpha = 1)
+
+best_lambda <- lasso_cv$lambda.min
+print(best_lambda)
+
+lasso_coef <- coef(lasso_cv, s = "lambda.min")
+?coef()
+print(lasso_coef)
+```
+
+
+Now, let's see if the model has improved compared to the previous logistic regression.
+
+```{r}
+# Make predictions using the LASSO model
+predicted_prob <- predict(lasso_cv, newx = x, s = best_lambda, type = "response")
+predicted_label <- ifelse(predicted_prob >= 0.5, 1, 0)
+
+# Create the confusion matrix
+conf_matrix <- table(predicted_label, y)
+print(conf_matrix)
+
+```
+
+
+## Comparison of models
+
+```{r}
+
+
+# Ensure pp_train contains only the relevant columns
+pp_train <- pp_train[1:6]
+
+# Prepare the data for Model 1
+model1 <- glm(labels ~ Weight + Age, data = pp_train, family = "binomial")
+
+# Prepare the predictor matrix for Model 2 (LASSO)
+x_train <- model.matrix(labels ~ ., pp_train)[, -1]  # Remove the intercept
+y_train <- pp_train$labels
+
+x_test <- model.matrix(labels ~ ., pp_test)[, -1]  # Remove the intercept
+y_test <- pp_test$labels
+
+# Map string labels to numeric values for y_test
+y_test_numeric <- ifelse(y_test == "surviving", 1, 0)
+
+# Perform LASSO with cross-validation to find the optimal lambda
+set.seed(123)  # For reproducibility
+lasso_cv <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1)
+best_lambda <- lasso_cv$lambda.min
+
+# Make predictions on the test set using Model 1
+pred_prob_model1 <- predict(model1, newdata = pp_test, type = "response")
+pred_label_model1 <- ifelse(pred_prob_model1 >= 0.5, 1, 0)
+
+# Make predictions on the test set using Model 2 (LASSO)
+pred_prob_model2 <- predict(lasso_cv, newx = x_test, s = best_lambda, type = "response")
+pred_label_model2 <- ifelse(pred_prob_model2 >= 0.5, 1, 0)
+
+# Ensure predicted and actual labels are factors with the same levels
+pred_label_model1 <- factor(pred_label_model1, levels = c(0, 1))
+pred_label_model2 <- factor(pred_label_model2, levels = c(0, 1))
+y_test_factor <- factor(y_test_numeric, levels = c(0, 1))
+
+# Calculate performance metrics
+# Accuracy
+accuracy_model1 <- mean(pred_label_model1 == y_test_factor)
+accuracy_model2 <- mean(pred_label_model2 == y_test_factor)
+
+# Confusion Matrix
+conf_matrix_model1 <- confusionMatrix(pred_label_model1, y_test_factor)
+conf_matrix_model2 <- confusionMatrix(pred_label_model2, y_test_factor)
+
+# Precision, Recall, F1 Score
+precision_model1 <- conf_matrix_model1$byClass['Pos Pred Value']
+recall_model1 <- conf_matrix_model1$byClass['Sensitivity']
+f1_model1 <- 2 * (precision_model1 * recall_model1) / (precision_model1 + recall_model1)
+
+precision_model2 <- conf_matrix_model2$byClass['Pos Pred Value']
+recall_model2 <- conf_matrix_model2$byClass['Sensitivity']
+f1_model2 <- 2 * (precision_model2 * recall_model2) / (precision_model2 + recall_model2)
+
+# ROC-AUC
+roc_model1 <- roc(as.numeric(y_test_factor), as.numeric(pred_prob_model1))
+roc_model2 <- roc(as.numeric(y_test_factor), as.numeric(pred_prob_model2))
+auc_model1 <- auc(roc_model1)
+auc_model2 <- auc(roc_model2)
+```
+
+```{r, echo =F}
+# Create a data frame to hold the performance metrics
+performance_metrics <- data.frame(
+  Metric = c("Accuracy", "Precision", "Recall", "F1 Score", "AUC"),
+  Model_1_Weight_and_Age = c(accuracy_model1, precision_model1, recall_model1, f1_model1, auc_model1),
+  Model_2_LASSO = c(accuracy_model2, precision_model2, recall_model2, f1_model2, auc_model2)
+)
+
+# Print the table
+kable(performance_metrics) %>% 
+  kable_styling()
+
+```
+
+
+Performance Metrics:
+
+**Accuracy**
+
+- Definition: The proportion of correctly classified instances out of the total instances.
+
+- Interpretation: LASSO has higher accuracy, indicating that it correctly predicts more instances overall.
+
+
+**Precision**
+
+- Definition: The proportion of true positives among the predicted positives.
+
+- Interpretation: LASSO has higher precision, meaning it has fewer false positives relative to true positives.
+
+
+**Recall (Sensitivity):**
+
+- Definition: The proportion of true positives among the actual positives.
+
+- Interpretation: LASSO has a higher recall, meaning that it identifies a higher proportion of actual positive instances correctly.
+
+
+**F1 Score:**
+
+- Definition: The harmonic mean of precision and recall.
+
+- Interpretation: LASSO has a higher F1 score, indicating a better balance between precision and recall.
+
+
+**AUC (Area Under the ROC Curve):**
+
+- Definition: A measure of the ability of the model to distinguish between positive and negative classes. Value Range: 0 to 1, with 1 being perfect discrimination.
+
+- Interpretation: LASSO has a slightly higher AUC, indicating a better overall ability to distinguish between the classes.
+
+
+## Overall Summary
+
+We found that the LASSO-based logistic regression model provides a more accurate model than sinmple logistic regression. However, in both instances, we identified that weight is the most important factor, followd by age.
+
