@@ -56,16 +56,8 @@ The course is divided into the following conceptual blocks:
 - **Introduction to Advanced ML Techniques**
   - Gain an overview of advanced machine learning methods including random forests, boosting, bagging, and neural networks.
 
-- **Practical 6: Random Forests**
-  - Learn how to implement and evaluate random forests for classification and regression tasks.
-
-- **Practical 7: Boosting Techniques**
-  - Understand the concept of boosting and how it can improve model performance.
-  - Apply boosting algorithms to various datasets.
-
-- **Practical 8: Neural Networks**
-  - Get introduced to the basics of neural networks.
-  - Build simple neural network models for predictive tasks.
+- **Practical 6: Work on your own project**
+  - Learn how to implement and evaluate a ML pipeline
 
 ## Prerequisites
 - Basic knowledge of R programming.
