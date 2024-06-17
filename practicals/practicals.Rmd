@@ -41,7 +41,7 @@ library(patchwork)
 
 ## Session 1.1 (Monday)
 
-### Linear Regression / Model Selection
+### Linear Regression / Correlated data
 
 #### Exercise 1: 
 
@@ -64,7 +64,8 @@ data = cement
  - Check your answers by performing the corresponding linear regression models
  
  
- 
+## Session 1.2 (Monday)
+### Model Selction and LASSO
 #### Exercise 2: 
 
 We consider the pyrimidine data set. It contains 74 activity measurements of the enzyme DHFR in a bacterium in the presence of different pyrimidines characterized by 26 physico-chemical properties. Those properties are quantified by the variables X1 to X26; the activity of DHFR is the response variable Y.
@@ -93,14 +94,17 @@ Computer-Aided Molecular Design, 8(4):405–420, 1994.
   4. What value would you choose for $\lambda$?
  
 
-## Session 1.2 (Monday)
+## Session 1.3 (Monday)
 ### Logistic Regression
 
 In a study, survival of prematurely born babies was examined.
 
 Explanatory variables: 
+
 - birth weight (grams),
+
 - age (weeks after procreation), 
+
 - three clinical variables
 
 
@@ -109,8 +113,9 @@ Explanatory variables:
 - Visualize the dataset
 - Perform Logistic Regression
 - Rank the variables and identify the most important ones
-- Do model selection using LRT and AIC
+- Do model selection using LRT or AIC
 - Perform LASSO analysis on the dataset and compare your results
+- Implement a CV scheme and comapre your results to the automatic CV from glmnet
 
 
 # Day 2 {.tabset}
