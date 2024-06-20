@@ -1,0 +1,297 @@
+---
+title: "Exercise 5: Building a CARET pipeline"
+subtitle: ""
+author:
+  - name: "Aparna Pandey, Marco Kreuzer & Stephan Peischl"
+    affiliation: "IBU Machine Learning Summer School 2024, University of Bern"
+date: "`r format(Sys.time(), '%d.%m.%Y')`"
+output:
+  html_document:
+    self_contained: true
+    toc: true # table of content true
+    toc_float: true
+    toc_depth: 2  # upto two depths of headings (specified by #, ## and ###)
+    theme: spacelab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libraries, echo=FALSE,warning=FALSE,message=FALSE}
+# load required libraries
+library(tidyverse)
+library(naniar)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(GGally)
+
+library(MASS)
+library(data.table)
+library(lmtest)
+
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(groupdata2)
+```
+
+In this tutorial, we again use the premature birth data. The aim of the tutorial
+is to write a simple machine learning pipeline where we can eaily change the input data
+or where we can easily change the statistical model we want to apply.
+
+## Preprocess Data
+
+We apply the same preprocessing steps as seen in the previous
+tutorial.
+
+The steps include:
+
+- rename the response variable to "labels"
+
+- convert the categorical response to factor
+
+- Splitting the data into test and training data
+
+- Balance the data set to have the same number of instances in each class
+
+- Center and scale the data
+
+
+<!-- - Ftting CART model to the data -->
+<!--    - Choose the cp paramter using cross validation -->
+<!--    - Implement a CV scheme (e.g., leave on out cross validation) yourself -->
+<!--    - Compare the pruned tree to the full tree to see which one works better on new data (i.e., data that was not used to fit the model). How would you do this? -->
+
+
+```{r Setting up}
+# load data
+data <- read.table("data/baby.dat", header=TRUE)
+
+# Find the index of the "Survival" column
+label_index <- which(colnames(data) == "Survival")
+
+# Rename the column to "labels" and convert it to a factor
+colnames(data)[label_index] <- "labels"
+data$labels = as.factor(data$labels)
+
+##########################
+# We can use another dataset instead of baby dataset
+
+# eg:
+# data(iris)
+# data = iris
+# data = dplyr::rename(data,labels = Species)
+# 
+# 
+# # Wisconsin Breast Cancer Database
+# data(BreastCancer)
+# head(BreastCancer)
+# levels(BreastCancer$Class)
+# df = na.omit(BreastCancer[,-1])
+# df = dplyr::rename(df,labels = Class)
+###########################
+
+
+
+# convert categorical independent variables into factors
+# we have none
+
+# Separate Categorical and continuous independe
+
+numeric_variables <- data %>% 
+    select_if(~ !is.factor(.)) %>% 
+    colnames()
+
+categorical_variables <- data %>% 
+    select_if(~ is.factor(.)) %>% 
+    colnames()
+
+# Split data into training and test data
+training_index <- createDataPartition(data$labels , 
+                                p = .7, list = FALSE,times = 1) %>%  as.numeric()
+
+test_index <- which(!(seq_len(nrow(data)) %in% training_index))
+
+
+training_data = data[training_index,]
+test_data = data[test_index,]
+
+
+# Assess the data split
+table(training_data$labels)
+table(test_data$labels)
+
+# balance the data set
+training_data = training_data  %>%
+balance(cat_col = "labels", size = "min")
+
+test_data = test_data  %>%
+balance(cat_col = "labels", size = "max")
+
+
+# Center and scale the data:
+preproc <- preProcess(training_data, method = c("center","scale")) # note that factors are not transformed
+pp_train <- predict(preproc, training_data) # centering and Scaling train set based on train data
+
+preproc <- preProcess(test_data, method = c("center","scale")) # note that factors are not transformed
+pp_test <- predict(preproc, test_data) # centering and Scaling test set based on test data
+```
+
+We also define some plotting functions:
+
+```{r data exploration and Data Visualization}
+# Function to create confusion matrix
+
+plot.cm = function(cmtable,angx = 0,angy = 0)
+{
+  plt <- as.data.frame(cmtable)
+  
+  plt$Prediction <- factor(plt$Prediction, levels=rev(levels(plt$Prediction)))
+  
+  ggplot(plt, aes(Prediction,Reference, fill= Freq)) +
+    geom_tile() + geom_text(aes(label=Freq)) +
+    scale_fill_gradient(low="white", high="#009194", limits = c(0,max(cmtable))) +
+    labs(y = "Reference",x = "Prediction") + 
+    theme(axis.text.x = element_text(angle = angx, vjust = 0.5, hjust=0.5)) + 
+    theme(axis.text.y = element_text(angle = angy, vjust = -0.5, hjust=0.5)) + 
+    theme(text = element_text(size = 20)) 
+  
+}
+
+# here i define a color palette to use as standard when plotting with ggplot
+# this is purely for aesthetic reasons
+
+cbp2 <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+scale_colour_discrete <- function(...) 
+{ scale_colour_manual(..., values = cbp2)
+}
+
+```
+
+## CARET pipeline
+
+We now will use the power of the CARET package to build a machine learning 
+pipeline with only a few lines of code. We first reproduce the previous
+tutorial by applying a rpart model.
+
+```{r }
+mod_caret = caret::train(labels~ ., 
+                        data=pp_train,
+                        method = 'rpart')
+mod_caret
+
+class(mod_caret)
+
+pred = predict(mod_caret,pp_test,type="raw")
+pred.in.sample = predict(mod_caret,pp_train,type="raw")
+
+mean(pred != pp_test$labels)
+mean(pred.in.sample != pp_train$labels)
+
+cm <- confusionMatrix(pred, pp_test$labels)
+plot.cm(cm$table)
+```
+
+```{r}
+importance <- varImp(mod_caret, scale=F)
+plot(importance)
+mod_caret
+```
+
+
+```{r Model fitting using Caret framework}
+mod_caret = caret::train(labels~ ., 
+                        data=pp_train,
+                        method = 'cforest')
+
+pred = predict(mod_caret,pp_test,type="raw")
+pred.in.sample = predict(mod_caret,pp_train,type="raw")
+
+mean(pred != pp_test$labels)
+mean(pred.in.sample != pp_train$labels)
+
+cm <- confusionMatrix(pred, pp_test$labels)
+plot.cm(cm$table)
+```
+
+
+
+```{r Model fitting using Caret framework with cross-validation: leave one out}
+
+set.seed(10)
+
+control <- trainControl(method = "loocv")
+mod_caret_loocv = caret::train(labels~ ., 
+                        data=pp_train,
+                        method = 'rpart',
+                    trControl = control)
+mod_caret_loocv
+rpart.plot(mod_caret_loocv$finalModel,type = 5,clip.right.labs = FALSE, branch = .3, under = TRUE)
+pred = predict(mod_caret_loocv,pp_test,type="raw")
+pred.in.sample = predict(mod_caret_loocv,pp_train,type="raw")
+
+mis.class = mean(pred != pp_test$labels)
+mis.class.in.sample = mean(pred.in.sample != pp_train$labels)
+
+mis.class
+mis.class.in.sample
+# evaluate model peformance on the training data and visulaize your results with a confusion matrix
+cm <- confusionMatrix(pred.in.sample, pp_train$labels)
+plot.cm(cm$table)
+
+# evaluate model peformance on the test data and visulaize your results with a confusion matrix
+cm <- confusionMatrix(pred, pp_test$labels)
+plot.cm(cm$table)
+```
+
+
+
+```{r Model fitting using Caret framework with k-fold cross-validation}
+
+# Fit a decision tree using the package rpart
+
+# the same exercise in the caret framework
+set.seed(10)
+
+# Specify the cross-validation settings
+control <- trainControl(method = "cv",  # Use cross-validation
+                        number = 20   # Number of folds
+                        
+                        )
+mod_caret_kfold = caret::train(labels~ ., 
+                        data=pp_train,
+                        method = 'rpart',
+                        trControl = control)
+
+mod_caret_kfold
+
+rpart.plot(mod_caret_kfold$finalModel,
+           type = 5,
+           clip.right.labs = FALSE, 
+           branch = .3, 
+           under = TRUE)
+
+pred = predict(mod_caret_kfold,pp_test,type="raw")
+
+pred.in.sample = predict(mod_caret_kfold,pp_train,type="raw")
+
+mis.class = mean(pred != pp_test$labels)
+mis.class.in.sample = mean(pred.in.sample != pp_train$labels)
+
+mis.class
+mis.class.in.sample
+# evaluate model peformance on the training data and visulaize your results with a confusion matrix
+cm <- confusionMatrix(pred.in.sample, pp_train$labels)
+plot.cm(cm$table)
+
+# evaluate model peformance on the test data and visulaize your results with a confusion matrix
+cm <- confusionMatrix(pred, pp_test$labels)
+plot.cm(cm$table)
+
+# summarize accuracy measures in a table
+kable(cm$byClass)
+```

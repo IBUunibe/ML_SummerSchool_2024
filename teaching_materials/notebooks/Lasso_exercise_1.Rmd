@@ -1,0 +1,154 @@
+---
+title: "LASSO exercise 1"
+author: "Stephan Peischl"
+date: "2024-05-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GGally)
+```
+
+
+We consider the pyrimidine data set presented in the lecture. It contains 74 activity measurements of the enzyme DHFR in a bacterium in the presence of different pyrimidines characterized by 26 physico-chemical properties. Those properties are quantified by the variables X1 to X26; the activity of DHFR is the response variable Y.
+
+Reference: Jonathan D Hirst, Ross D King, and Michael JE Sternberg. Quantitative structure-activity relationships by neural
+networks and inductive logic programming. i. the inhibition of dihydrofolate reductase by pyrimidines. Journal of
+Computer-Aided Molecular Design, 8(4):405–420, 1994.
+
+
+## Load the Data Set
+
+First, lets load the pyrimidine data set, then we will proceed to answer the following questions:
+
+1. What is the optimal range for the regularization parameter lambda?
+  - [−5;−3]
+  - [0.0001; 0.001]
+  - [0.005; 0.05]
+  - [0.1; 1]
+  - [3; 5]
+
+2. When choosing lambda = 0.018 (left dotted line in left plot), how many non-zero coefficients do we get? Write down the model equation.
+
+3. Assume now that we choose lambda = 0.05 (right dotted line in left plot). Which variables remain in the model in this case?
+
+## Lasso Regression Analysis
+
+```{r ex1}
+
+# Load the data set
+pyrimidine <- read.csv("~/Dropbox/Teaching/Summer School ML 2024/Data sets/pyrimidine.dat", sep=";")
+n <- nrow(pyrimidine)
+p <- ncol(pyrimidine) - 1
+
+# Preview the dataset
+head(pyrimidine)
+# Generate a subset of the data to visualize first few variables for illustration
+pyrimidine_subset <- pyrimidine[, 1:5]  # For example, using the first 5 variables
+
+# Create pair plot
+ggpairs(pyrimidine_subset)
+
+```
+
+```{r}
+# Load the glmnet package
+library(glmnet)
+
+# Set the seed for reproducibility
+set.seed(307)
+
+# Prepare the data for glmnet
+X <- as.matrix(pyrimidine[, -(p+1)])
+y <- pyrimidine$y
+
+# Perform Lasso regression
+pyr.lasso <- glmnet(X, y)
+
+# Plot the Lasso model
+plot(pyr.lasso, xvar = "lambda")
+
+```
+
+
+```{r}
+# Cross-validation to find the optimal lambda
+pyr.lasso.cv <- cv.glmnet(X, y)
+
+# Plot the cross-validation results
+plot(pyr.lasso.cv)
+
+# Display the optimal lambda values
+lambda_min <- pyr.lasso.cv$lambda.min
+lambda_1se <- pyr.lasso.cv$lambda.1se
+
+lambda_min
+lambda_1se
+
+```
+
+```{r}
+# Coefficients at the optimal lambda (lambda.1se)
+coef_1se <- coef(pyr.lasso.cv, s = 0.06940168)
+print("Coefficients at lambda.1se:")
+print(coef_1se)
+
+# Predictions at lambda.min for the first observation
+prediction <- predict(pyr.lasso.cv, newx = as.matrix(pyrimidine[1, -ncol(pyrimidine)]), s = lambda_min)
+print("Prediction for the first observation at lambda.min:")
+prediction
+
+# Actual value for the first observation
+actual_value <- pyrimidine$y[1]
+print("Actual value for the first observation:")
+actual_value
+
+```
+
+Question A
+What is the optimal range for the regularization parameter lambda?
+
+- [−5;−3]
+- [0.0001; 0.001]
+- [0.005; 0.05]
+- [0.1; 1]
+- [3; 5]
+
+
+Question B
+
+When choosing λ = 0.018 (left dotted line in left plot), how many non-zero coefficients do we get? Write down the model equation.
+
+```{r}
+# Coefficients at lambda = 0.018
+coef_018 <- coef(pyr.lasso.cv, s = 0.018)
+print("Coefficients at lambda = 0.018:")
+print(coef_018)
+
+# Count non-zero coefficients
+num_non_zero <- sum(coef_018 != 0)
+print("Number of non-zero coefficients at lambda = 0.018:")
+num_non_zero
+
+# Display model equation (only non-zero coefficients)
+print("Model equation at lambda = 0.018:")
+coef_018[coef_018 != 0]
+
+```
+
+Question C
+Assume now that we choose λ = 0.05 (right dotted line in left plot). Which variables remain in the model in this case?
+
+```{r}
+# Coefficients at lambda = 0.05
+coef_050 <- coef(pyr.lasso.cv, s = 0.05)
+print("Coefficients at lambda = 0.05:")
+print(coef_050)
+
+# Display non-zero coefficients
+print("Variables remaining in the model at lambda = 0.05:")
+coef_050[coef_050 != 0]
+
+```
+
