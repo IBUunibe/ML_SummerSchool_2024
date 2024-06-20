@@ -1,0 +1,295 @@
+---
+title: "Exercise 4: CART"
+subtitle: ""
+author:
+- name: "Aparna Pandey, Marco Kreuzer & Stephan Peischl"
+affiliation: "IBU Machine Learning Summer School 2024, University of Bern"
+date: "`r format(Sys.time(), '%d.%m.%Y')`"
+output:
+html_document:
+self_contained: true
+toc: true # table of content true
+toc_float: true
+toc_depth: 2  # upto two depths of headings (specified by #, ## and ###)
+theme: spacelab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(42)
+```
+
+In our previous lessons, we have explored classical statistical models, such as regressions. These models are based on fitting mathematical equations to data, allowing us to understand relationships and make predictions based on certain assumptions about the data distribution and underlying patterns. Classical models like linear and logistic regression are powerful tools but often rely on these assumptions being met for accurate results.
+
+In machine learning, we often use models that are designed to be more flexible and make fewer assumptions about the data. One key feature of many machine learning models is their reliance on cross-validation. This technique is used to assess the performance of the models and how the models generalize to unseen data.
+
+The first model to explore these concepts will be with decision trees. Decision trees are intuitive and powerful models that partition the data into subsets based on feature values, creating a tree-like structure of decisions. Unlike classical models, decision trees do not assume a specific form for the data, making them versatile for various types of data and problems.
+
+By using cross-validation, we can fine-tune our decision tree models, balancing complexity and performance. This approach ensures we build models that not only fit our training data well but also perform effectively on new, unseen data.
+
+## Data Manipulation
+
+We will use again the survival data of prematurely born babies. But this time, 
+we will fit a classification and regression trees using the `rcart` package in R.
+
+```{r libraries, echo=FALSE,warning=FALSE,message=FALSE}
+# load required libraries
+library(tidyverse)
+library(naniar)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(GGally)
+
+library(MASS)
+library(data.table)
+library(lmtest)
+
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(groupdata2)
+```
+
+<!-- ## Summary of the Script -->
+
+<!-- - Ftting CART model to the data -->
+<!--    - Choose the cp paramter using cross validation -->
+<!--    - Implement a CV scheme (e.g., leave on out cross validation yourself -->
+<!--    - Compare the pruned tree to the full tree to see which one works better on new data (i.e., data that was not used to fit the model). How would you do this? -->
+
+
+Load the data set.
+
+```{r Setting up}
+
+# load data
+data <- read.table("data/baby.dat", header=TRUE)
+```
+Transoform data:
+
+```{r}
+# Find the index of the "Survival" column
+label_index <- which(colnames(data) == "Survival")
+
+# Rename the column to "labels" and convert it to a factor
+colnames(data)[label_index] <- "labels"
+
+data$labels = as.factor(data$labels)
+
+numeric_variables <- data %>% 
+    select_if(~ !is.factor(.)) %>% 
+    colnames()
+categorical_variables <- data %>% 
+    select_if(~ is.factor(.)) %>% 
+    colnames()
+
+```
+
+
+Split the data into train and test data set. Using separate train and test data when building CART models helps evaluate how well the model generalizes to new, unseen data, preventing overfitting. The training data is used to teach the model the underlying patterns, while the testing data provides an unbiased measure of its performance. This ensures the model's accuracy and reliability in real-world applications.
+
+In this example, we make a 70%, 30% split.
+
+```{r data preprocessing}
+# Split data into training and test data
+
+training_index <- createDataPartition(data$labels , 
+                                p = .7, list = FALSE,times = 1) %>%  as.numeric()
+
+test_index <- which(!(seq_len(nrow(data)) %in% training_index))
+
+
+training_data = data[training_index,]
+test_data = data[test_index,]
+
+
+# Assess the data split
+table(training_data$labels)
+table(test_data$labels)
+```
+
+However, for training and testing the model, we want to balance the data.
+Balancing the dataset ensures that each class has an equal representation, which helps the model learn equally well for all classes and not be biased toward the majority class. In our example, balancing the training data by the minimum class size ensures fair training, while balancing the test data by the maximum class size provides a robust evaluation. This approach improves the model's ability to generalize and make accurate predictions across all classes. Consequently, it prevents issues like overfitting to the majority class and enhances the reliability of the model’s performance.
+
+```{r}
+# balance the data set
+training_data = training_data  %>%
+balance(cat_col = "labels", size = "min")
+
+test_data = test_data  %>%
+balance(cat_col = "labels", size = "max")
+```
+
+We then also center and scale the data before fitting the model.
+
+**Important** This is done after splitting the data. Otherwise we would introduce
+data leakage.
+
+```{r}
+# Center and scale the data
+preproc <- preProcess(training_data, method = c("center","scale")) # note that factors are not transformed
+pp_train <- predict(preproc, training_data) # centering and Scaling train set based on train data
+
+preproc <- preProcess(test_data, method = c("center","scale")) # note that factors are not transformed
+pp_test <- predict(preproc, test_data) # centering and Scaling test set based on test data
+
+# Assess the data split
+table(pp_train$labels)
+table(pp_test$labels)
+```
+
+## Data Modelling
+
+```{r Model fitting}
+
+# Fit a decision tree using the package rpart
+
+# minsplit=10 sets the minimum number of observations required in a node in order for it to be split further.
+mod = rpart(labels~.,minsplit=10,data=pp_train)
+
+# Fit the model
+# type = 5 indicates that the plot will include the split variable name in the interior nodes
+rpart.plot(mod,type = 5)
+```
+
+We then calculate the classification performance:
+
+
+```{r}
+# calcualte misclassification rate:
+pred = predict(mod,pp_test,type="class")
+pred_in_sample = predict(mod,pp_train,type="class")
+
+# Misclassification rate based on test data
+mis_class_full = mean(pred != pp_test$labels)
+
+# Misclassification rate  based on trainingt data (in-sample misclassification)
+mis_class_full_in_sample =mean(pred_in_sample != pp_train$labels)
+
+mis_class_full
+mis_class_full_in_sample
+```
+
+We can evaluate the model in different ways. One of them is by plotting using the function
+`plotcp(mod)`: This function plots the complexity parameter (cp) against the model's performance. 
+The complexity parameter controls the size of the decision tree; smaller values allow for a more complex tree.
+
+```{r Complexity parameter (CP)}
+
+# cross validation of the performance
+plotcp(mod)
+
+# optimal hyperparameter
+cp = mod$cptable[which.min(mod$cptable[,4]),1]
+cp
+
+```
+
+As can be seen, a tree with depth 2 seems to perform better. We can use this 
+knowledge to prune the model.
+
+```{r Model pruning}
+# prune the tree using the manually selected hyperparamater cp
+mod = prune(mod,cp=cp)
+
+# pruned tree
+rpart.plot(mod,type = 5,clip.right.labs = FALSE, branch = .3, under = TRUE)
+
+# calcualte misclassification rate:
+pred = predict(mod,pp_test,type="class")
+pred_in_sample = predict(mod,pp_train,type="class")
+
+# Misclassification rate based on test data
+mis_class_pruned = mean(pred != pp_test$labels)
+
+# Misclassification rate  based on trainingt data (in-sample misclassification)
+mis_class_pruned_in_sample =mean(pred_in_sample != pp_train$labels)
+
+mis_class_pruned
+mis_class_pruned_in_sample
+
+```
+
+
+As a next step, we can compare the models:
+
+```{r Model Comparison}
+# Compare the two models
+
+df_miss_class = data.frame(
+  model = c("full","full","pruned","pruned"),
+  data.set = c("test","train","test","train"),
+  error = c(mis_class_full,mis_class_full_in_sample,
+            mis_class_pruned,mis_class_pruned_in_sample)
+)
+
+plot1 = ggplot(dat = df_miss_class) + 
+  geom_bar(stat="identity",
+           aes(y = error,x = model,fill = data.set),
+           position=position_dodge()) + 
+  theme_minimal() + 
+  ylim(0,0.5)
+
+show(plot1)
+```
+
+
+```{r function to plot confusion Matrix}
+# Function to create confusion matrix
+
+plot.cm = function(cmtable,angx = 0,angy = 0)
+{
+  plt <- as.data.frame(cmtable)
+  
+  plt$Prediction <- factor(plt$Prediction, levels=rev(levels(plt$Prediction)))
+  
+  ggplot(plt, aes(Prediction,Reference, fill= Freq)) +
+    geom_tile() + geom_text(aes(label=Freq)) +
+    scale_fill_gradient(low="white", high="#009194", limits = c(0,max(cmtable))) +
+    labs(y = "Reference",x = "Prediction") + 
+    theme(axis.text.x = element_text(angle = angx, vjust = 0.5, hjust=0.5)) + 
+    theme(axis.text.y = element_text(angle = angy, vjust = -0.5, hjust=0.5)) + 
+    theme(text = element_text(size = 20)) 
+}
+
+# here i define a color palette to use as standard when plotting with ggplot
+# this is purely for aesthetic reasons
+
+cbp2 <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+scale_colour_discrete <- function(...) 
+{ scale_colour_manual(..., values = cbp2)
+}
+```
+
+```{r plot confusion Matrix}
+# Confusion matrix for the pruned model
+# note accuracy  = 1- misclassification rate
+cm <- confusionMatrix(pred_in_sample, pp_train$labels)
+plot.cm(cm$table)
+cm$byClass
+# Summarize perfromance measures
+cm_dat_dt = data.frame(RPart = cm$byClass)
+cm_dat_dt %>%
+  kbl() %>%
+  kable_styling()
+
+
+
+cm <- confusionMatrix(pred, pp_test$labels)
+plot.cm(cm$table)
+cm$byClass
+# Summarize perfromance measures
+cm_dat_dt = data.frame(RPart = cm$byClass)
+cm_dat_dt %>%
+  kbl() %>%
+  kable_styling()
+
+```
+
+
+
+
+
+
